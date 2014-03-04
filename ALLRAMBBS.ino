@@ -66,7 +66,7 @@ __asm volatile ("nop");
 #include <SPI.h>
 #include <Ethernet.h>
 
-extern EthernetClient telnetClient;
+extern EthernetClient client;
 
 // Prototypes...
 byte telnetRead(EthernetClient client);
@@ -1006,7 +1006,7 @@ int instr(char *str, char *substr)
 #ifdef ENET_PORT
 byte lineinput(char *cmdLine, byte len)
 {
-  return telnetInput(telnetClient, cmdLine, len);
+  return telnetInput(client, cmdLine, len);
 }
 #else
 // LINE INPUT str
@@ -1369,7 +1369,7 @@ void printSemi(const char *string)
 {
   tabPos = tabPos + Serial.print(string);
 #if defined(ENET_PORT)
-  telnetClient.print(string);
+  client.print(string);
 #endif
 }
 // For strings in Flash.
@@ -1377,7 +1377,7 @@ void printSemi(const __FlashStringHelper *string)
 {
   tabPos = tabPos + Serial.print(string);
 #if defined(ENET_PORT)
-  telnetClient.print(string);
+  client.print(string);
 #endif
 }
 // For printing a byte as a number (0-255).
@@ -1388,9 +1388,9 @@ void printSemi(byte num)
   Serial.print(F(" "));
   tabPos = tabPos + 2;
 #if defined(ENET_PORT)
-  telnetClient.print(F(" "));
-  telnetClient.print(num);
-  telnetClient.print(F(" "));
+  client.print(F(" "));
+  client.print(num);
+  client.print(F(" "));
 #endif
 }
 // For printing a single character.
@@ -1398,7 +1398,7 @@ void printCharSemi(char ch)
 {
   tabPos = tabPos + Serial.print(ch);
 #if defined(ENET_PORT)
-  telnetClient.print(ch);
+  client.print(ch);
 #endif
 }
 // For printing a byte as a number with no spaces.
@@ -1406,7 +1406,7 @@ void printNumSemi(byte num)
 {
   tabPos = tabPos + Serial.print(num);
 #if defined(ENET_PORT)
-  telnetClient.print(num);
+  client.print(num);
 #endif
 }
 
@@ -1415,7 +1415,7 @@ void print(void)
 {
   Serial.println();
 #if defined(ENET_PORT)
-  telnetClient.println();
+  client.println();
 #endif
 }
 
@@ -1425,7 +1425,7 @@ void print(const char *string)
   Serial.println(string);
   tabPos = 0;
 #if defined(ENET_PORT)
-  telnetClient.println(string);
+  client.println(string);
 #endif
 }
 void print(const __FlashStringHelper *string)
@@ -1433,7 +1433,7 @@ void print(const __FlashStringHelper *string)
   Serial.println(string);
   tabPos = 0;
 #if defined(ENET_PORT)
-  telnetClient.println(string);
+  client.println(string);
 #endif
 }
 
@@ -1444,8 +1444,8 @@ void print(int num)
   Serial.println(num);
   tabPos = 0;
 #if defined(ENET_PORT)
-  telnetClient.print(F(" "));
-  telnetClient.println(num);
+  client.print(F(" "));
+  client.println(num);
 #endif
 }
 
