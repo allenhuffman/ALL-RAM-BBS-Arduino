@@ -1,73 +1,122 @@
-//http://www.controllerprojects.com/2011/05/23/saving-ram-space-on-arduino-when-you-do-a-serial-printstring-in-quotes/
-//http://www.adafruit.com/blog/2008/04/17/free-up-some-arduino-sram/
+// BOF preprocessor bug prevent - insert me on top of your arduino-code
+/*
+#if 1
+__asm volatile ("nop");
+#endif
+*/
 /*-----------------------------------------------------------------------------
+ 
+ *ALL RAM* BBS for Arduino
+ by Allen C. Huffman (alsplace@pobox.com / www.appleause.com)
+ 
+ This is an experiment to see how easy it is to translate Microsoft BASIC to
+ Arduino C. The translated C code is incredibly ugly and will be disturbing
+ to most modern programmers. It was done just to see if it could be done, and
+ what better thing to translate than a program that was also originally done
+ just to see if it could be done -- a cassette based BBS package from 1983!
+ 
+ About the *ALL RAM* BBS:
+ 
+ The *ALL RAM* BBS System was writtin in 1983 for the Radio Shack TRS-80
+ Color Computer ("CoCo"). At this time, existing BBS packages for the CoCo
+ required "2-4 disk drives" to operate, so *ALL RAM* was created to prove
+ a BBS could run from a cassette-based computer. Instead of using floppy
+ disks to store the userlog and message base, they were contained entirely
+ in RAM. The in-memory databases could be saved to cassette tape and
+ reloaded later.
+ 
+ The original BASIC source code is included in comments, followed by a very
+ literal line-by-line translation to Arduino C. Remember, it's not a rewrite
+ in C -- it's BASIC code done in C.
+ 
+ Be warned. There be "gotos" ahead!
+ 
+ References about memory saving:
+ 
+ http://www.controllerprojects.com/2011/05/23/saving-ram-space-on-arduino-when-you-do-a-serial-printstring-in-quotes/
+ http://www.adafruit.com/blog/2008/04/17/free-up-some-arduino-sram/
+ 
+ 2013-04-02 0.0 allenh - Initial version with working userlog.
+ 2013-04-03 1.0 allenh - Message base working. Core system fully functional.
+ Preliminary support for Arduino Ethernet added.
+ 2013-04-04 1.1 allenh - SD card support for loading/saving.
+ 2013-04-05 1.2 allenh - Ethernet (telnet) support.
+ 2013-04-06 1.3 allenh - Cleanup for posting to www.appleause.com
+ 2013-04-09 1.4 allenh - Fixed a bug with INPUT_SIZE and input.
+ 2013-04-12 1.5 allenh - Integration with new Telnet server code, misc fixes.
+ -----------------------------------------------------------------------------*/
+#include <avr/pgmspace.h>
 
-*ALL RAM* BBS for Arduino
-by Allen C. Huffman (alsplace@pobox.com / www.appleause.com)
+#define VERSION "1.5"
 
-This is an experiment to see how easy it is to translate Microsoft BASIC to
-Arduino C. The translated C code is incredibly ugly and will be disturbing
-to most modern programmers. It was done just to see if it could be done, and
-what better thing to translate than a program that was also originally done
-just to see if it could be done -- a cassette based BBS package from 1983!
+// To enable SD card support, define the PIN used by SD.begin(x)
+//#define SD_PIN        4
 
-About the *ALL RAM* BBS:
+// To enable Ethernet support, defined the PORT used by EthernetServer(PORT)
+#define ENET_PORT     23
 
-The *ALL RAM* BBS System was writtin in 1983 for the Radio Shack TRS-80
-Color Computer ("CoCo"). At this time, existing BBS packages for the CoCo
-required "2-4 disk drives" to operate, so *ALL RAM* was created to prove
-a BBS could run from a cassette-based computer. Instead of using floppy
-disks to store the userlog and message base, they were contained entirely
-in RAM. There in-memory databases could be saved to cassette tape and
-reloaded later.
-
-The original BASIC source code is included in comments, followed by a very
-literal line-by-line translation to Arduino C.
-
-Be warned. There be "gotos" ahead!
-
-2013-04-02 0.0 allenh - Initial version with working userlog.
-2013-04-03 1.0 allenh - Message base working. Core system fully functional.
-                        Preliminary support for Arduino Ethernet added.
------------------------------------------------------------------------------*/
-#define VERSION "1.0"
-
-#define SD_PIN 4 // Not enough RAM to support this :(
+// NOTE: On smaller Arduinos (UNO), there is not enough Flash or RAM to have
+// both SD and Ethernet support at the same time.
 
 #if defined(SD_PIN)
 #include <SD.h>
 #endif
-/*---------------------------------------------------------------------------*/
 
+#if defined(ENET_PORT)
+#include <SPI.h>
+#include <Ethernet.h>
+
+extern EthernetClient telnetClient;
+
+// Prototypes...
+byte telnetRead(EthernetClient client);
+byte telnetInput(EthernetClient client, char *cmdLine, byte len);
+#endif
+
+// And so it begins.
 void setup()
 {
   Serial.begin(9600);
 
   while(!Serial);
-  
+
+  showHeader();
+
+#if defined(ENET_PORT)
+  telnetInit();
+#endif
+
+  showConfig();
+
   // Scroll off any leftover console output.
-  for(int i=0; i<24; i++) print();
+  //for(int i=0; i<24; i++) print();
 }
 
+// We don't really have anything loop worthy for this program, so we'll
+// just have some fun and pretend like we are starting up the CoCo each
+// time through.
 void loop()
 {
-  showHeader();
-  showConfig();
+  showCoCoHeader(); // Just for fun...
 
   allram();
 
-  print(F("Done. System restarting..."));
+  print();
+  print(F("BREAK IN 520"));
+  print(F("OK"));
+
   delay(5000);
 }
 
+// Show program header.
 void showHeader()
 {
   // Emit some startup stuff to the serial port.
-  print(F("*ALL RAM* BBS for Arduino "VERSION" - 30 year anniversary edition!"));
-  print(F("Ported from TRS-80 Color Computer Extended Color BASIC."));
-  print(F("Copyright (C) 1983 by Allen C. Huffman"));
-  print(F("Arduino port (F) 2013 by Allen C. Huffman (www.appleause.com)"));
-  print(F("Build Date: "__DATE__" "__TIME__"\n"));
+  print(F("\n"
+    "*ALL RAM* BBS for Arduino "VERSION" - 30 year anniversary edition!\n"
+    "Copyright (C) 1983 by Allen C. Huffman\n"
+    "Ported from TRS-80 Color Computer Extended Color BASIC.\n"
+    "Build Date: "__DATE__" "__TIME__"\n"));
 }
 
 /*---------------------------------------------------------------------------*/
@@ -75,8 +124,8 @@ void showHeader()
 // the strings.
 #define INPUT_SIZE  32  // 64. For aStr, etc.
 
-#define MAX_USERS   3   // 200. Userlog size. (0-200, 0 is Sysop)
-#define NAME_SIZE   10  // 20. Username size (nmStr)
+#define MAX_USERS   3   // NM$(200) Userlog size. (0-200, 0 is Sysop)
+#define NAME_SIZE   12   // 20. Username size (nmStr)
 #define PSWD_SIZE   8   // 8. Password size (psStr & pwStr) 
 #define ULOG_SIZE   (NAME_SIZE+1+PSWD_SIZE+1+1)
 
@@ -100,11 +149,12 @@ void showHeader()
 #define MBASE_MEM   ((MAX_MSGS+1)*MAX_LINE*INPUT_SIZE)
 
 // Validate the settings before compiling.
-#if (FR_SIZE+1+TO_SIZE+SB+SIZE > INPUT_SIZE)
+#if (FR_SIZE+1+TO_SIZE+SB_SIZE > INPUT_SIZE)
 #error INPUT_SIZE too small to hold "From\To\Sub".
 #endif
 
 /*---------------------------------------------------------------------------*/
+
 //0 REM *ALL RAM* BBS System 1.0
 //1 REM   Shareware / (C) 1983
 //2 REM     By Allen Huffman
@@ -113,17 +163,24 @@ void showHeader()
 //5 CLS:FORA=0TO8:READA$:POKE1024+A,VAL("&H"+A$):NEXTA:EXEC1024:DATAC6,1,96,BC,1F,2,7E,96,A3
 //10 CLEAR21000:DIMNM$(200),MS$(19,10),A$,F$,S$,T$,BR$,CL$,NM$,PS$,PW$,A,B,C,CL,LN,LV,MS,NM,KY,UC
 
-char nmArray[MAX_USERS+1][ULOG_SIZE];               // NM$(200)
-char msArray[MAX_MSGS+1][MAX_LINE+1][INPUT_SIZE];   // MS$(19,10)
-char aStr[INPUT_SIZE];                              // A$
-char fStr[FR_SIZE];                                 // F$ - From
-char sStr[SB_SIZE];                                 // S$ - Subj
-char tStr[TO_SIZE];                                 // T$ - To
-char brStr[] = "*==============*==============*";   // BR$ - border
-char clStr[] = "\x0c\x0e";                          // CL$ - clear
-char nmStr[NAME_SIZE];                              // NM$ - Name
-char psStr[PSWD_SIZE];                              // PS$ - Pswd
-char pwStr[PSWD_SIZE];                              // PW$ - Pswd
+// All variables in BASIC are global, so we are declaring them outside the
+// functions to make them global in C as well. Arrays in BASIC are "0 to X",
+// and in C they are "0 to X-1", so we add one to them in C to get the same
+// number of elements.
+char nmArray[MAX_USERS+1][ULOG_SIZE];             // NM$(200)
+char msArray[MAX_MSGS+1][MAX_LINE+1][INPUT_SIZE+1];// MS$(19,10) 1.4
+char aStr[INPUT_SIZE+1];                          // A$ 1.4
+char fStr[FR_SIZE];                               // F$ - From
+char sStr[SB_SIZE];                               // S$ - Subj
+char tStr[TO_SIZE];                               // T$ - To
+char nmStr[NAME_SIZE];                            // NM$ - Name
+char psStr[PSWD_SIZE];                            // PS$ - Pswd
+char pwStr[PSWD_SIZE];                            // PW$ - Pswd
+
+// To save RAM, these two strings will exist in Flash memory. It will
+// require a bit of work later to use them (__FlashStringHelper*).
+prog_char brStr[] PROGMEM = "*==============*==============*"; // BR$ - border
+prog_char clStr[] PROGMEM = "\x0c\x0e";                        // CL$ - clear
 
 int a, b, c, cl, ln, lv, ms, nm, ky, uc;
 // A, B, C - misc.
@@ -139,16 +196,18 @@ void allram()
 {
   // HACK - create adefault Sysop account.
   nm = 0;
-  //strcpy(nmArray[0], "SYSOP\\TEST9");
-  pstrncpy(nmArray[0], PSTR("SYSOP\\TEST9"), ULOG_SIZE);
+  strncpy_P(nmArray[0], PSTR("SYSOP\\TEST9"), ULOG_SIZE);
 
-//15 CL$=CHR$(12)+CHR$(14):BR$="*==============*==============*":GOSUB555
+  cls(); // From line 5  
+
+  //15 CL$=CHR$(12)+CHR$(14):BR$="*==============*==============*":GOSUB555
   //char cl[] = "\0xC\0xE";
   //char br[] = "*==============*==============*";
   gosub555();
 
-  line20:
-//20 CLS:PRINTTAB(6)"*ALL RAM* BBS SYSTEM":PRINT"USERS:"NM,"CALLS:"CL:PRINTTAB(5)"SYSTEM AWAITING CALLER";:GOSUB1005:SOUND200,10
+//20 CLS:PRINTTAB(6)"*ALL RAM* BBS SYSTEM":PRINT"USERS:"NM,"CALLS:"CL:PRINTTAB(5)"SYSTEM AWAITING CALLER";:go:SOUND200,10
+line20:
+nmStr[0] = 0; // reset user.
   cls();
   printTab(6);
   print(F("*ALL RAM* BBS SYSTEM"));
@@ -159,21 +218,25 @@ void allram()
   print(cl);
   printTab(5);
   printSemi(F("SYSTEM AWAITING CALLER"));
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   sound(200,10);
 
-//25 A$="Welcome To *ALL RAM* BBS!":GOSUB1055:KY=0:CL=CL+1
-  pstrncpy(aStr, PSTR("Welcome To *ALL RAM* BBS!"), INPUT_SIZE);
+  //25 A$="Welcome To *ALL RAM* BBS!":GOSUB1055:KY=0:CL=CL+1
+  strncpy_P(aStr, PSTR("Welcome To *ALL RAM* BBS!"), INPUT_SIZE);
   gosub1055();
   ky = 0;
   cl = cl + 1;
 
-//30 PRINT:PRINT"Password or 'NEW' :";:UC=1:GOSUB1005:PS$=A$:IFA$=""ORA$="NEW"THEN55ELSEPRINT"Checking: ";:A=0
-  line30:
+  showLoginMessage();
+
+  //30 PRINT:PRINT"Password or 'NEW' :";:UC=1:GOSUB1005:PS$=A$:IFA$=""ORA$="NEW"THEN55ELSEPRINT"Checking: ";:A=0
+line30:
   print();
   printSemi(F("Password or 'NEW' :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   strncpy(psStr, aStr, PSWD_SIZE);
   if (aStr[0]=='\0' || strcmp(aStr, "NEW")==0)
   {
@@ -185,11 +248,9 @@ void allram()
     a = 0;
   }
 
-  //if (nm==0) goto line40; // For when no Sysop account exists.
-
-  line35:
-//35 A$=NM$(A):B=INSTR(A$,"\"):NM$=LEFT$(A$,B-1):PW$=MID$(A$,B+1,LEN(A$)-B-1):LV=VAL(RIGHT$(A$,1)):IFPW$=PS$THEN45ELSEA=A+1:IFA<=NM THEN35
-  strncpy(aStr, nmArray[a], NAME_SIZE+1+PSWD_SIZE+1);
+line35:
+  //35 A$=NM$(A):B=INSTR(A$,"\"):NM$=LEFT$(A$,B-1):PW$=MID$(A$,B+1,LEN(A$)-B-1):LV=VAL(RIGHT$(A$,1)):IFPW$=PS$THEN45ELSEA=A+1:IFA<=NM THEN35
+  strncpy(aStr, nmArray[a], ULOG_SIZE);
   b = instr(aStr, "\\");
   strncpy(nmStr, aStr, b-1);
   nmStr[b-1] = '\0';  
@@ -205,18 +266,18 @@ void allram()
     a = a + 1;
     if (a<=nm) goto line35;
   }
-    
-  line40: // for empty userlog bug
-//40 PRINT"*INVALID*":KY=KY+1:IFKY<3THEN30ELSE215
+
+line40: // for empty userlog bug
+  //40 PRINT"*INVALID*":KY=KY+1:IFKY<3THEN30ELSE215
   print(F("*INVALID*"));
   ky = ky + 1;
   if (ky<3) goto line30;
   goto line215;
-  
-  line45:
-//45 PRINT"*ACCEPTED*":PRINTBR$:PRINT"On-Line: "NM$:PRINT"Access :"LV:PRINT"Caller :"CL:KY=0:GOTO115
+
+line45:
+  //45 PRINT"*ACCEPTED*":PRINTBR$:PRINT"On-Line: "NM$:PRINT"Access :"LV:PRINT"Caller :"CL:KY=0:GOTO115
   print(F("*ACCEPTED*"));
-  print(brStr);
+  print((__FlashStringHelper*)brStr);
   printSemi(F("On-Line: "));
   print(nmStr);
   printSemi(F("Access :"));
@@ -226,13 +287,13 @@ void allram()
   ky = 0;
   goto line115;
 
-//50 'New User
-  line55:
-//55 A$="Password Application Form":GOSUB1055
-  pstrncpy(aStr, PSTR("Password Application Form"), INPUT_SIZE);
+  //50 'New User
+line55:
+  //55 A$="Password Application Form":GOSUB1055
+  strncpy_P(aStr, PSTR("Password Application Form"), INPUT_SIZE);
   gosub1055();
 
-//60 IFNM=200THENPRINT"Sorry, the userlog is full now.":GOTO215ELSEPRINT"Name=20 chars, Password=8 chars"
+  //60 IFNM=200THENPRINT"Sorry, the userlog is full now.":GOTO215ELSEPRINT"Name=20 chars, Password=8 chars"
   if (nm==MAX_USERS)
   {
     print(F("Sorry, the userlog is full now."));
@@ -246,24 +307,26 @@ void allram()
     printNumSemi(PSWD_SIZE); 
     printSemi(F(" chars"));
   }
-  
-  line65:
-//65 PRINT:PRINT"Full Name :";:UC=1:GOSUB1005:NM$=A$:IFA$=""ORLEN(A$)>20THEN30
+
+line65:
+  //65 PRINT:PRINT"Full Name :";:UC=1:GOSUB1005:NM$=A$:IFA$=""ORLEN(A$)>20THEN30
   print();
   printSemi(F("Full Name :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   strncpy(nmStr, aStr, NAME_SIZE);
   if (aStr[0]=='\0' || strlen(aStr)>20) goto line30;
-  
-//70 PRINT"Password  :";:UC=1:GOSUB1005:PW$=A$:IFA$=""ORLEN(A$)>8THEN30
+
+  //70 PRINT"Password  :";:UC=1:GOSUB1005:PW$=A$:IFA$=""ORLEN(A$)>8THEN30
   printSemi(F("Password  :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   strncpy(pwStr, aStr, PSWD_SIZE);
   if (aStr[0]=='\0' || strlen(aStr)>8) goto line30;
-  
-//75 PRINT:PRINT"Name :"NM$:PRINT"Pswd :"PW$:PRINT"Is this correct? ";:UC=1:GOSUB1005:IFLEFT$(A$,1)="Y"THEN80ELSE65
+
+  //75 PRINT:PRINT"Name :"NM$:PRINT"Pswd :"PW$:PRINT"Is this correct? ";:UC=1:GOSUB1005:IFLEFT$(A$,1)="Y"THEN80ELSE65
   print();
   printSemi(F("Name :"));
   print(nmStr);
@@ -271,7 +334,8 @@ void allram()
   print(pwStr);
   printSemi(F("Is this correct? "));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   if (aStr[0]=='Y')
   {
     goto line80;
@@ -280,32 +344,31 @@ void allram()
   {
     goto line65;
   }
-  
-  line80:
-//80 NM=NM+1:NM$(NM)=NM$+"\"+PW$+"0":LV=0:KY=0
+
+line80:
+  //80 NM=NM+1:NM$(NM)=NM$+"\"+PW$+"0":LV=0:KY=0
   nm = nm + 1;
   strncpy(nmArray[nm], nmStr, NAME_SIZE);
-  pstrcat(nmArray[nm], PSTR("\\"));
+  strcat_P(nmArray[nm], PSTR("\\"));
   strncat(nmArray[nm], pwStr, PSWD_SIZE);
-  //pstrcat(nmArray[nm], "0");
-  pstrcat(nmArray[nm], PSTR("1")); // AUTO VALIDATED
+  //strcat_P(nmArray[nm], PSTR("0"));
+  strcat_P(nmArray[nm], PSTR("1")); // AUTO VALIDATED
   //lv = 0;
   lv = 1;
   ky = 0;
-Serial.print("-->");
-Serial.println(nmArray[nm]);
-//85 PRINT"Your password will be validated as soon as time permits.  Press":PRINT"[ENTER] to continue :";:GOSUB1005
+  //85 PRINT"Your password will be validated as soon as time permits.  Press":PRINT"[ENTER] to continue :";:GOSUB1005
   print(F("Your password will be validated as soon as time permits.  Press"));
   printSemi(F("[ENTER] to continue :"));
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
 
-//100 'Main Menu
-  line105:
-//105 A$="*ALL RAM* BBS Master Menu":GOSUB1055
-  pstrncpy(aStr, PSTR("*ALL RAM* BBS Master Menu"), INPUT_SIZE);
+  //100 'Main Menu
+line105:
+  //105 A$="*ALL RAM* BBS Master Menu":GOSUB1055
+  strncpy_P(aStr, PSTR("*ALL RAM* BBS Master Menu"), INPUT_SIZE);
   gosub1055();
 
-//110 PRINT"C-all Sysop","P-ost Msg":PRINT"G-oodbye","R-ead Msg":PRINT"U-serlog","S-can Titles"
+  //110 PRINT"C-all Sysop","P-ost Msg":PRINT"G-oodbye","R-ead Msg":PRINT"U-serlog","S-can Titles"
   printSemi(F("C-all Sysop"));
   printComma();
   print(F("P-ost Msg"));
@@ -316,12 +379,12 @@ Serial.println(nmArray[nm]);
   printComma();
   print(F("S-can Titles"));
 
-  line115:
-//115 PRINTBR$
-  print(brStr);
+line115:
+  //115 PRINTBR$
+  print((__FlashStringHelper*)brStr);
 
-  line120:
-//120 KY=KY+1:IFKY>200THENPRINT"Sorry, your time on-line is up.":GOTO210ELSEIFKY>180THENPRINT"Please complete your call soon."
+line120:
+  //120 KY=KY+1:IFKY>200THENPRINT"Sorry, your time on-line is up.":GOTO210ELSEIFKY>180THENPRINT"Please complete your call soon."
   ky = ky + 1;
   if (ky>200)
   {
@@ -333,17 +396,18 @@ Serial.println(nmArray[nm]);
     print(F("Please complete your call soon."));
   }
 
-  line125:
-//125 PRINTTAB(7)"?=Menu/Command :";:UC=1:GOSUB1005:A$=LEFT$(A$,1)
+line125:
   showFreeRam();
+  //125 PRINTTAB(7)"?=Menu/Command :";:UC=1:GOSUB1005:A$=LEFT$(A$,1)
   printTab(7);
   printSemi(F("?=Menu/Command :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[1] = '\0';
 
-  line130:
-//130 LN=INSTR("?CGRSPU%",A$):IFLN=0THENPRINT"*Invalid Command*":GOTO120
+line130:
+  //130 LN=INSTR("?CGRSPU%",A$):IFLN=0THENPRINT"*Invalid Command*":GOTO120
   ln = instr("?CGRSPU%", aStr);
   if (ln==0)
   {
@@ -351,14 +415,14 @@ Serial.println(nmArray[nm]);
     goto line120;
   }
 
-//135 IFLV<1ANDLN>5THENPRINT" Sorry, you are not validated.":GOTO125
+  //135 IFLV<1ANDLN>5THENPRINT" Sorry, you are not validated.":GOTO125
   if (lv<1 && ln>5)
   {
     print(F(" Sorry, you are not validated."));
     goto line125;
   }
 
-//140 ONLN GOTO105,155,205,405,455,305,255,505
+  //140 ONLN GOTO105,155,205,405,455,305,255,505
   if (ln==1) goto line105;
   if (ln==2) goto line155;
   if (ln==3) goto line205;
@@ -368,15 +432,15 @@ Serial.println(nmArray[nm]);
   if (ln==7) goto line255;
   if (ln==8) goto line505;
 
-//150 'Call Sysop
-  line155:
-//155 A$="Calling the Sysop":GOSUB1055:A=0
-  pstrncpy(aStr, PSTR("Calling the Sysop"), INPUT_SIZE);
+  //150 'Call Sysop
+line155:
+  //155 A$="Calling the Sysop":GOSUB1055:A=0
+  strncpy_P(aStr, PSTR("Calling the Sysop"), INPUT_SIZE);
   gosub1055();
   a = 0;
-  
-//165 PRINT" BEEP!";:SOUND150,5:IFINKEY$=CHR$(12)THEN175ELSEprintING$(5,8);:A=A+1:IFA<25THEN165
-  line165:
+
+  //165 PRINT" BEEP!";:SOUND150,5:IFINKEY$=CHR$(12)THEN175ELSEprintING$(5,8);:A=A+1:IFA<25THEN165
+line165:
   printSemi(F(" BEEP!"));
   sound(150, 5);
   if (inkey()==12)
@@ -389,20 +453,22 @@ Serial.println(nmArray[nm]);
     a = a + 1;
     if (a<25) goto line165;
   }
-    
-//170 PRINT:PRINT" The Sysop is unavaliable now.":GOTO115
+
+  //170 PRINT:PRINT" The Sysop is unavaliable now.":GOTO115
   print(F(""));
   print(F(" The Sysop is unavaliable now."));
   goto line115;
-  
-  line175:
-//175 PRINT:PRINTTAB(6)"*Chat mode engaged*"
+
+line175:
+  //175 PRINT:PRINTTAB(6)"*Chat mode engaged*"
+  print();
   printTab(6);
   print(F("*Chat mode engaged*"));
-  
-  line180:
-//180 GOSUB1005:IFLEFT$(A$,3)="BYE"THEN185ELSE180
-  gosub1005();
+
+line180:
+  //180 GOSUB1005:IFLEFT$(A$,3)="BYE"THEN185ELSE180
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   if (strncmp(aStr, "BYE", 3)==0)
   {
     goto line185;
@@ -412,18 +478,18 @@ Serial.println(nmArray[nm]);
     goto line180;
   }
 
-  line185:
-//185 PRINTTAB(5)"*Chat mode terminated*":GOTO115
+line185:
+  //185 PRINTTAB(5)"*Chat mode terminated*":GOTO115
   goto line115;
 
-//200 'Goodbye
-  line205:
-//205 A$="Thank you for calling":GOSUB1055
-  pstrncpy(aStr, PSTR("Thank you for calling"), INPUT_SIZE);
+  //200 'Goodbye
+line205:
+  //205 A$="Thank you for calling":GOSUB1055
+  strncpy_P(aStr, PSTR("Thank you for calling"), INPUT_SIZE);
   gosub1055();
-  
-  line210:
-//210 PRINT:PRINT"Goodbye, "NM$"!":PRINT:PRINT"Please call again."
+
+line210:
+  //210 PRINT:PRINT"Goodbye, "NM$"!":PRINT:PRINT"Please call again."
   print(F(""));
   printSemi(F("Goodbye, "));
   printSemi(nmStr);
@@ -431,22 +497,26 @@ Serial.println(nmArray[nm]);
   print();
   print(F("Please call again."));
 
-  line215:
-//215 PRINT:PRINT:PRINT"*ALL RAM* BBS disconnecting..."
+line215:
+  //215 PRINT:PRINT:PRINT"*ALL RAM* BBS disconnecting..."
   print();
   print();
   print(F("*ALL RAM* BBS disconnecting..."));
 
-//220 FORA=1TO1000:NEXTA
+  //220 FORA=1TO1000:NEXTA
   delay(1000);
 
-//225 GOTO20
+#if defined(ENET_PORT)
+  telnetDisconnect();
+#endif
+
+  //225 GOTO20
   goto line20;
 
-//250 'Userlog
-  line255:
-//255 A$="List of Users":GOSUB1055:PRINT"Users on system:"NM:IFNM=0THEN115ELSEA=1
-  pstrncpy(aStr, PSTR("List of Users"), INPUT_SIZE);
+  //250 'Userlog
+line255:
+  //255 A$="List of Users":GOSUB1055:PRINT"Users on system:"NM:IFNM=0THEN115ELSEA=1
+  strncpy_P(aStr, PSTR("List of Users"), INPUT_SIZE);
   gosub1055();
   printSemi(F("Users on system:"));
   print(nm);
@@ -458,8 +528,8 @@ Serial.println(nmArray[nm]);
   {
     a = 1;
   }
-  line260:
-//260 A$=NM$(A):PRINTLEFT$(A$,INSTR(A$,"\")-1)TAB(29)RIGHT$(A$,1)
+line260:
+  //260 A$=NM$(A):PRINTLEFT$(A$,INSTR(A$,"\")-1)TAB(29)RIGHT$(A$,1)
   strncpy(aStr, nmArray[a], INPUT_SIZE);
   {
     char tempStr[NAME_SIZE+1];         // Add room for NULL.
@@ -470,27 +540,28 @@ Serial.println(nmArray[nm]);
   printTab(29);
   print(right(aStr,1));
 
-//265 IF(A/10)=INT(A/10)THENPRINT"C-ontinue or S-top :";:UC=1:GOSUB1005:IFLEFT$(A$,1)="S"THEN275
+  //265 IF(A/10)=INT(A/10)THENPRINT"C-ontinue or S-top :";:UC=1:GOSUB1005:IFLEFT$(A$,1)="S"THEN275
   if (a % 10 == 9)
   {
     printSemi(F("C-ontinue or S-top :"));
     uc = 1;
-    gosub1005();
+    //gosub1005();
+    if (gosub1005()==255) goto line20;
     if (aStr[0]=='S') goto line275;
   }
 
-//270 A=A+1:IFA<=NM THEN260
+  //270 A=A+1:IFA<=NM THEN260
   a = a + 1;
   if (a<=nm) goto line260;
 
-  line275:
-//275 PRINT"*End of Userlog*":GOTO115
+line275:
+  //275 PRINT"*End of Userlog*":GOTO115
   print(F("*End of Userlog*"));
   goto line115;
 
-//300 'Post Msg
-  line305:
-//305 IFMS=20THENPRINT"One moment, making room...":FORA=0TO18:FORB=0TO10:MS$(A,B)=MS$(A+1,B):NEXTB:NEXTA:MS=19
+  //300 'Post Msg
+line305:
+  //305 IFMS=20THENPRINT"One moment, making room...":FORA=0TO18:FORB=0TO10:MS$(A,B)=MS$(A+1,B):NEXTB:NEXTA:MS=19
   if (ms==MAX_MSGS+1)
   {
     print(F("One moment, making room..."));
@@ -503,9 +574,9 @@ Serial.println(nmArray[nm]);
     }
     ms = MAX_MSGS;
   }
-//310 CLS:PRINTCL$"This will be message #"MS+1:FORA=0TO10:MS$(MS,A)="":NEXTA:F$=NM$
+  //310 CLS:PRINTCL$"This will be message #"MS+1:FORA=0TO10:MS$(MS,A)="":NEXTA:F$=NM$
   cls();
-  //print(clStr);
+  print((__FlashStringHelper*)clStr);
   printSemi(F("This will be message #"));
   print(ms+1);
   for (a=0; a<=MAX_LINE; a++)
@@ -513,37 +584,40 @@ Serial.println(nmArray[nm]);
     msArray[ms][a][0] = '\0';
   }
   strncpy(fStr, nmStr, NAME_SIZE);
-  
-//315 PRINT"From :"F$:PRINT"To   :";:UC=1:GOSUB1005:A$=LEFT$(A$,20):T$=A$:IFA$=""THEN115
+
+  //315 PRINT"From :"F$:PRINT"To   :";:UC=1:GOSUB1005:A$=LEFT$(A$,20):T$=A$:IFA$=""THEN115
   printSemi(F("From :"));
   print(fStr);
   printSemi(F("To   :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[NAME_SIZE] = '\0';
   strncpy(tStr, aStr, TO_SIZE);
   if (aStr[0]=='\0') goto line115;
-    
-//320 PRINT"Is this message private? ";:UC=1:GOSUB1005:IFLEFT$(A$,1)="Y"THENS$="*E-Mail*":GOTO330
+
+  //320 PRINT"Is this message private? ";:UC=1:GOSUB1005:IFLEFT$(A$,1)="Y"THENS$="*E-Mail*":GOTO330
   printSemi(F("Is this message private? "));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   if (aStr[0]=='Y')
   {
-    pstrncpy(sStr, PSTR("*E-Mail*"), SB_SIZE);
+    strncpy_P(sStr, PSTR("*E-Mail*"), SB_SIZE);
     goto line330;
   }
 
-//325 PRINT"Subj :";:UC=1:GOSUB1005:A$=LEFT$(A$,18):S$=A$:IFA$=""THEN115
+  //325 PRINT"Subj :";:UC=1:GOSUB1005:A$=LEFT$(A$,18):S$=A$:IFA$=""THEN115
   printSemi(F("Subj :"));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[SB_SIZE-1] = '\0';
   strncpy(sStr, aStr, SB_SIZE);
   if (aStr[0]=='\0') goto line115;
 
-  line330:
-//330 PRINT"Enter up to 10 lines, 64 chars. [ENTER] on a blank line to end.":A=0
+line330:
+  //330 PRINT"Enter up to 10 lines, 64 chars. [ENTER] on a blank line to end.":A=0
   printSemi(F("Enter up to"));
   printSemi(MAX_LINE);
   printSemi(F("lines,"));
@@ -551,11 +625,12 @@ Serial.println(nmArray[nm]);
   print(F("chars. [ENTER] on a blank line to end."));
   a = 0;
 
-  line335:
-//335 A=A+1:PRINTUSING"##>";A;:GOSUB1005:MS$(MS,A)=A$:IFA$=""THENA=A-1:GOTO345ELSEIFA<10THEN335
+line335:
+  //335 A=A+1:PRINTUSING"##>";A;:GOSUB1005:MS$(MS,A)=A$:IFA$=""THENA=A-1:GOTO345ELSEIFA<10THEN335
   a = a + 1;
-  printUsing("##>", a);
-  gosub1005();
+  printUsingSemi("##>", a);
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   strncpy(msArray[ms][a], aStr, INPUT_SIZE);
   if (aStr[0]=='\0')
   {
@@ -564,19 +639,20 @@ Serial.println(nmArray[nm]);
   }
   else if (a<MAX_LINE) goto line335;
 
-  line340:
-//340 PRINT"*Message Buffer Full*"
+line340:
+  //340 PRINT"*Message Buffer Full*"
   print(F("*Message Buffer Full*"));
 
-  line345:
-//345 PRINT"A-bort, C-ont, E-dit, L-ist, or S-ave Message? ";:UC=1:GOSUB1005:A$=LEFT$(A$,1):IFA$=""THEN345
+line345:
+  //345 PRINT"A-bort, C-ont, E-dit, L-ist, or S-ave Message? ";:UC=1:GOSUB1005:A$=LEFT$(A$,1):IFA$=""THEN345
   printSemi(F("A-bort, C-ont, E-dit, L-ist, or S-ave Message? "));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[1] = '\0';
   if (aStr[0]=='\0') goto line345;
 
-//350 LN=INSTR("ACELS",A$):IFLN=0THEN345ELSEONLN GOTO385,355,360,375,380
+  //350 LN=INSTR("ACELS",A$):IFLN=0THEN345ELSEONLN GOTO385,355,360,375,380
   ln = instr("ACELS", aStr);
   if (ln==0) goto line345;
   if (ln==1) goto line385;
@@ -585,30 +661,33 @@ Serial.println(nmArray[nm]);
   if (ln==4) goto line375;
   if (ln==5) goto line380;
 
-  line355:
-//355 IFA<10THENPRINT"Continue your message:":GOTO335ELSE340
+line355:
+  //355 IFA<10THENPRINT"Continue your message:":GOTO335ELSE340
   if (a<MAX_LINE)
   {
     printSemi(F("Continue your message:"));
     goto line335;
-  } else goto line340;
+  } 
+  else goto line340;
 
-  line360:  
-//360 PRINT"Edit line 1 -"A":";:GOSUB1005:LN=VAL(LEFT$(A$,2)):IFLN<1ORLN>A THEN345
+line360:  
+  //360 PRINT"Edit line 1 -"A":";:GOSUB1005:LN=VAL(LEFT$(A$,2)):IFLN<1ORLN>A THEN345
   printSemi(F("Edit line 1 -"));
   printSemi(a);
   printSemi(F(":"));
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[2] = '\0';
   ln = atoi(aStr);
   if (ln<1 || ln>a) goto line345;
 
-//365 PRINT"Line currently reads:":PRINTMS$(MS,LN):PRINT"Enter new line:":GOSUB1005:A$=LEFT$(A$,64):IFA$=""THENPRINT"*Unchanged*"ELSEMS$(MS,LN)=A$:PRINT"*Corrected*"
+  //365 PRINT"Line currently reads:":PRINTMS$(MS,LN):PRINT"Enter new line:":GOSUB1005:A$=LEFT$(A$,64):IFA$=""THENPRINT"*Unchanged*"ELSEMS$(MS,LN)=A$:PRINT"*Corrected*"
   print(F("Line currently reads:"));
   print(msArray[ms][ln]);
   print(F("Enter new line:"));
-  gosub1005();
-  aStr[64] = '\0';
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
+  aStr[INPUT_SIZE] = '\0'; // 1.4
   if (aStr[0]=='\0')
   {
     print(F("*Unchanged*"));
@@ -618,28 +697,28 @@ Serial.println(nmArray[nm]);
     strncpy(msArray[ms][ln], aStr, INPUT_SIZE);
     print(F("*Corrected*"));
   }
-  
-//370 GOTO360
+
+  //370 GOTO360
   goto line360;
-  
-  line375:
-//375 CLS:PRINTCL$"Message Reads:":FORB=1TOA:PRINTUSING"##>";B;:PRINTMS$(MS,B):NEXTB:GOTO345
+
+line375:
+  //375 CLS:PRINTCL$"Message Reads:":FORB=1TOA:PRINTUSING"##>";B;:PRINTMS$(MS,B):NEXTB:GOTO345
   cls();
-  //print(clStr);
+  print((__FlashStringHelper*)clStr);
   print(F("Message Reads:"));
   for (b=1; b<=a; b++)
   {
-    printUsing("##>", b);
+    printUsingSemi("##>", b);
     print(msArray[ms][b]);
   }
   goto line345;
 
-  line380:
-//380 MS$(MS,0)=T$+"\"+F$+"\"+S$:MS=MS+1:PRINT"*Message"MS"stored*":GOTO115
+line380:
+  //380 MS$(MS,0)=T$+"\"+F$+"\"+S$:MS=MS+1:PRINT"*Message"MS"stored*":GOTO115
   strcpy(msArray[ms][0], tStr);
-  pstrcat(msArray[ms][0], PSTR("\\"));
+  strcat_P(msArray[ms][0], PSTR("\\"));
   strcat(msArray[ms][0], fStr);
-  pstrcat(msArray[ms][0], PSTR("\\"));
+  strcat_P(msArray[ms][0], PSTR("\\"));
   strcat(msArray[ms][0], sStr);
   ms = ms + 1;
   printSemi(F("*Message"));
@@ -647,35 +726,36 @@ Serial.println(nmArray[nm]);
   print(F("stored*"));
   goto line115;
 
-  line385:
-//385 PRINT"*Message Aborted*":GOTO115
+line385:
+  //385 PRINT"*Message Aborted*":GOTO115
   print(F("*Message Aborted*"));
   goto line115;
 
-//400 'Read Msg
-  line405:
-//405 IFMS=0THENPRINT"The message base is empty.":GOTO115
+  //400 'Read Msg
+line405:
+  //405 IFMS=0THENPRINT"The message base is empty.":GOTO115
   if (ms==0)
   {
     print(F("The message base is empty."));
     goto line115;
   }
-  
-//410 CLS:PRINTCL$
+
+  //410 CLS:PRINTCL$
   cls();
-  //print(clStr);
-  
-  line415:
-//415 PRINT"Read Message 1 -"MS":";:GOSUB1005:A=VAL(LEFT$(A$,2)):IFA<1ORA>MS THEN115
+  print((__FlashStringHelper*)clStr);
+
+line415:
+  //415 PRINT"Read Message 1 -"MS":";:GOSUB1005:A=VAL(LEFT$(A$,2)):IFA<1ORA>MS THEN115
   printSemi(F("Read Message 1 -"));
   printSemi(ms);
   printSemi(F(":"));
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   aStr[2] = '\0';
   a = atoi(aStr);
   if (a<1 || a>ms) goto line115;
 
-//420 A$=MS$(A-1,0):B=INSTR(A$,"\"):C=INSTR(B+1,A$,"\"):T$=LEFT$(A$,B-1):F$=MID$(A$,B+1,C-B-1):S$=RIGHT$(A$,LEN(A$)-C)
+  //420 A$=MS$(A-1,0):B=INSTR(A$,"\"):C=INSTR(B+1,A$,"\"):T$=LEFT$(A$,B-1):F$=MID$(A$,B+1,C-B-1):S$=RIGHT$(A$,LEN(A$)-C)
   strncpy(aStr, msArray[a-1][0], INPUT_SIZE);
   b = instr(aStr, "\\");
   c = instr(b+1, aStr, "\\");
@@ -684,8 +764,8 @@ Serial.println(nmArray[nm]);
   strncpy(fStr, (aStr-1)+b+1, c-b-1);
   fStr[c-b-1] = '\0'; // FIXTHIS - max copy sizes here?
   strncpy(sStr, right(aStr, strlen(aStr)-c), SB_SIZE);
-  
-//425 IFS$="*E-Mail*"ANDLV<8THENIFNM$<>T$ANDNM$<>F$THENPRINT"That message is private.":GOTO415
+
+  //425 IFS$="*E-Mail*"ANDLV<8THENIFNM$<>T$ANDNM$<>F$THENPRINT"That message is private.":GOTO415
   if (strcmp(sStr, "*E-Mail*")==0 && lv<8)
   {
     if (strcmp(nmStr, tStr)!=0 && strcmp(nmStr, fStr)!=0)
@@ -695,9 +775,9 @@ Serial.println(nmArray[nm]);
     }
   }
 
-//430 CLS:PRINTCL$"Message #"A:PRINT"From :"F$:PRINT"To   :"T$:PRINT"Subj :"S$:PRINT:B=0
+  //430 CLS:PRINTCL$"Message #"A:PRINT"From :"F$:PRINT"To   :"T$:PRINT"Subj :"S$:PRINT:B=0
   cls();
-  //print(clStr);
+  print((__FlashStringHelper*)clStr);
   printSemi(F("Message #"));
   print(a);
   printSemi(F("From :"));
@@ -709,8 +789,8 @@ Serial.println(nmArray[nm]);
   print();
   b = 0;
 
-  line435:
-//435 B=B+1:PRINTMS$(A-1,B):IFMS$(A-1,B)=""THEN440ELSEIFB<10THEN435
+line435:
+  //435 B=B+1:PRINTMS$(A-1,B):IFMS$(A-1,B)=""THEN440ELSEIFB<10THEN435
   b = b + 1;
   print(msArray[a-1][b]);
   if (msArray[a-1][b][0]=='\0')
@@ -719,30 +799,30 @@ Serial.println(nmArray[nm]);
   }
   else if (b<MAX_LINE) goto line435;
 
-  line440:
-//440 PRINT"*End of Message*":GOTO415
+line440:
+  //440 PRINT"*End of Message*":GOTO415
   print(F("*End of Message*"));
   goto line415;
 
-//450 'Scan Titles
-  line455:
-//455 IFMS=0THENPRINT"The message base is empty.":GOTO115
+  //450 'Scan Titles
+line455:
+  //455 IFMS=0THENPRINT"The message base is empty.":GOTO115
   if (ms==0)
   {
     print(F("The message base is empty."));
     goto line115;
   }
-  
-//460 CLS:PRINTCL$"Message Titles:":A=0
+
+  //460 CLS:PRINTCL$"Message Titles:":A=0
   cls();
-  //print(clStr);
+  print((__FlashStringHelper*)clStr);
   print(F("Message Titles:"));
   a = 0;
 
-  line465:
-//465 A$=MS$(A,0):PRINTUSING"[##] SB: ";A+1;:B=INSTR(A$,"\"):C=INSTR(B+1,A$,"\"):PRINTRIGHT$(A$,LEN(A$)-C):PRINTTAB(5)"TO: "LEFT$(A$,B-1):A=A+1:IFA<MS THEN465
+line465:
+  //465 A$=MS$(A,0):PRINTUSING"[##] SB: ";A+1;:B=INSTR(A$,"\"):C=INSTR(B+1,A$,"\"):PRINTRIGHT$(A$,LEN(A$)-C):PRINTTAB(5)"TO: "LEFT$(A$,B-1):A=A+1:IFA<MS THEN465
   strncpy(aStr, msArray[a][0], INPUT_SIZE);
-  printUsing("[##] SB: ", a+1);
+  printUsingSemi("[##] SB: ", a+1);
   b = instr(aStr, "\\");
   c = instr(b+1, aStr, "\\");
   print(right(aStr, strlen(aStr)-c));
@@ -757,115 +837,126 @@ Serial.println(nmArray[nm]);
   a = a + 1;
   if (a<ms) goto line465;
 
-//470 PRINT"*End of Messages*":GOTO115
+  //470 PRINT"*End of Messages*":GOTO115
   print(F("*End of Messages*"));
   goto line115;
 
-//500 '%SYSOP MENU%
-  line505:
-//505 IFLV<9THENA$="Z":GOTO130
+  //500 '%SYSOP MENU%
+line505:
+  //505 IFLV<9THENA$="Z":GOTO130
   if (lv<9)
   {
-    pstrncpy(aStr, PSTR("Z"), INPUT_SIZE);
+    strncpy_P(aStr, PSTR("Z"), INPUT_SIZE);
     goto line130;
   }
 
-//510 PRINT"PASSWORD?";:GOSUB1005:IFA$<>"?DROWSSAP"THENPRINT"Thank You!":GOTO115
+  //510 PRINT"PASSWORD?";:GOSUB1005:IFA$<>"?DROWSSAP"THENPRINT"Thank You!":GOTO115
   printSemi(F("PASSWORD?"));
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   if (strcmp(aStr, "?DROWSSAP")!=0)
   {
     print(F("Thank You!"));
     goto line115;
   }
 
-//515 PRINT"Abort BBS? YES or NO? ";:UC=1:GOSUB1005:IFA$<>"YES"THEN115
+  //515 PRINT"Abort BBS? YES or NO? ";:UC=1:GOSUB1005:IFA$<>"YES"THEN115
   printSemi(F("Abort BBS? YES or NO? "));
   uc = 1;
-  gosub1005();
+  //gosub1005();
+  if (gosub1005()==255) goto line20;
   if (strcmp(aStr, "YES")!=0) goto line115;
 
-//520 GOSUB605:STOP
+  //520 GOSUB605:STOP
   gosub605();
   return;
-}
+} // end of allram()
 
+/*---------------------------------------------------------------------------*/
+// Subroutines (formerly GOSUBs)
+//
+//550 '%LOAD%
 void gosub555()
 {
-//550 '%LOAD%
-//555 PRINT"%LOAD% [ENTER] WHEN READY";:GOSUB1005
+  //555 PRINT"%LOAD% [ENTER] WHEN READY";:GOSUB1005
   printSemi(F("%LOAD% [ENTER] WHEN READY"));
-  gosub1005();
-  
+  //gosub1005();
+  print();
   if (aStr[0]=='!') return;
 
-//560 OPEN"I",#-1,"USERLOG":INPUT#-1,CL,NM:FORA=0TONM:INPUT#-1,NM$(A):NEXTA:CLOSE
+  //560 OPEN"I",#-1,"USERLOG":INPUT#-1,CL,NM:FORA=0TONM:INPUT#-1,NM$(A):NEXTA:CLOSE
   loadUserlog();
 
-//565 OPEN"I",#-1,"MSG BASE":INPUT#-1,MS:FORA=0TOMS-1:FORB=0TO10:INPUT#-1,MS$(A,B):NEXTB:NEXTA:CLOSE:RETURN
+  //565 OPEN"I",#-1,"MSG BASE":INPUT#-1,MS:FORA=0TOMS-1:FORB=0TO10:INPUT#-1,MS$(A,B):NEXTB:NEXTA:CLOSE:RETURN
   loadMsgBase();
 }
 
+//600 '%SAVE%
 void gosub605()
 {
-//600 '%SAVE%
-//605 PRINT"%SAVE% [ENTER] WHEN READY";:GOSUB1005:MOTORON:FORA=0TO999:NEXTA
+  //605 PRINT"%SAVE% [ENTER] WHEN READY";:GOSUB1005:MOTORON:FORA=0TO999:NEXTA
   printSemi(F("%SAVE% [ENTER] WHEN READY"));
   gosub1005();
-
-//610 OPEN"O",#-1,"USERLOG":PRINT#-1,CL,NM:FORA=0TONM:PRINT#-1,NM$(A):NEXTA:CLOSE
+  
+  //610 OPEN"O",#-1,"USERLOG":PRINT#-1,CL,NM:FORA=0TONM:PRINT#-1,NM$(A):NEXTA:CLOSE
   saveUserlog();
 
-//615 OPEN"O",#-1,"MSG BASE":PRINT#-1,MS:FORA=0TOMS-1:FORB=0TO10:PRINT#-1,MS$(A,B):NEXTB:NEXTA:CLOSE:RETURN
+  //615 OPEN"O",#-1,"MSG BASE":PRINT#-1,MS:FORA=0TOMS-1:FORB=0TO10:PRINT#-1,MS$(A,B):NEXTB:NEXTA:CLOSE:RETURN
   saveMsgBase();
 }
 
+//1000 'User Input
 #define CR         13
 #define INBUF_SIZE 64
-//1000 'User Input
-void gosub1005()
+byte gosub1005()
 {
   byte ch; // Used only here, so we can make it local.
-  
-  //1005 LINEINPUTA$:A$=LEFT$(A$,64):IFUC=0ORA$=""THENRETURN
-  lineinput(aStr, INPUT_SIZE);
-  if ((uc==0) || (aStr[0]=='\0')) return;
+  byte count;
 
-//1010 FORC=1TOLEN(A$):CH=ASC(MID$(A$,C,1)):IFCH>96THENMID$(A$,C,1)=CHR$(CH-32)
+  //1005 LINEINPUTA$:A$=LEFT$(A$,64):IFUC=0ORA$=""THENRETURN
+  count = lineinput(aStr, INPUT_SIZE);
+  aStr[INPUT_SIZE] = '\0';
+  if ((uc==0) || (aStr[0]=='\0')) return count;
+
+  //1010 FORC=1TOLEN(A$):CH=ASC(MID$(A$,C,1)):IFCH>96THENMID$(A$,C,1)=CHR$(CH-32)
   for (c=0; c<strlen(aStr); c++)
   {
     ch = aStr[c];
     if (ch>96) aStr[c] = ch-32;    
-//1015 IFCH=92THENMID$(A$,C,1)="/"
+    //1015 IFCH=92THENMID$(A$,C,1)="/"
     if (ch==92) aStr[c] = '/';
-//1020 NEXTC:UC=0:RETURN
+    //1020 NEXTC:UC=0:RETURN
   }
-  uc = 0;  
+  uc = 0;
+  
+  return count;
 }
 
+//1050 'Function Border
 void gosub1055()
 {
-//1050 'Function Border
-//1055 CLS:PRINTCL$BR$:PRINTTAB((32-LEN(A$))/2)A$:PRINTBR$:RETURN
+  //1055 CLS:PRINTCL$BR$:PRINTTAB((32-LEN(A$))/2)A$:PRINTBR$:RETURN
   cls();
-  //print(clStr);
-  print(brStr);
+  print((__FlashStringHelper*)clStr);
+  print((__FlashStringHelper*)brStr);
   printTab((32-strlen(aStr))/2);
   print(aStr);
-  print(brStr);
+  print((__FlashStringHelper*)brStr);
 }
 
 /*---------------------------------------------------------------------------*/
 // The following functions mimic some of the Extended Color BASIC commands.
 
-// Misc. functions.
-// CLS - Clear the screen.
+// CLS
+// Clear the screen.
 void cls()
 {
-  print(F("\n--------------------------------\n"));
+  print();
+  print(F("--------------CLS--------------"));
 }
 
-// On the CoCo, sound (1-255), duration (1-255; 15=1 second).
+// SOUND tone, duration
+// On the CoCo, tone (1-255), duration (1-255; 15=1 second).
 void sound(byte tone, byte duration)
 {
   Serial.write(0x07);   // BEL
@@ -875,101 +966,128 @@ void sound(byte tone, byte duration)
 /*---------------------------------------------------------------------------*/
 // String functions.
 
-// STRING(
-void string(byte count, byte character)
+// STRING$(length, charcode)
+// Generate a string of length charcode chracters.
+void string(byte length, byte charcode)
 {
   int i;
-  
-  for (i=0; i<count; i++) Serial.write(character);
+
+  for (i=0; i<length; i++) printCharSemi(charcode);
 }
 
-char *right(char *aStr, byte pos)
+// RIGHT$(str, length)
+// Note: Modifies the passed in string, which is okay for our purpose but
+// would not be suitable as a generic replacement for RIGHT$.
+char *right(char *str, byte length)
 {
-  return &aStr[strlen(aStr)-pos];
+  return &str[strlen(str)-length];
 }
 
-int instr(byte startPos, char *aStr, char *target)
+// INSTR(first, str, substr)
+// Starting at pos, return position of substr in str, or 0 if not found.
+int instr(byte pos, char *str, char *substr)
 {
-  if (startPos<1) return 0;
-  return instr(aStr+startPos, target) + startPos;
+  if (pos<1) return 0;
+  return instr(aStr+pos, substr) + pos;
 }
-int instr(char *aStr, char *target)
+int instr(char *str, char *substr)
 {
   char *ptr;
-  
-  ptr = strstr(aStr, target);
+
+  ptr = strstr(str, substr);
   if (ptr==NULL) return 0; // No match?
-  if (ptr==&aStr[strlen(aStr)]) return 0; // Matched the \0 at end of line?
-  return ptr-aStr+1;
+  if (ptr==&str[strlen(str)]) return 0; // Matched the \0 at end of line?
+  return ptr-str+1;
 }
 
 /*---------------------------------------------------------------------------*/
 // Input functions.
 
-#define CMDLINE_SIZE INPUT_SIZE //80
+#ifdef ENET_PORT
+byte lineinput(char *cmdLine, byte len)
+{
+  return telnetInput(telnetClient, cmdLine, len);
+}
+#else
+// LINE INPUT str
+// Read string up to len bytes. This code comes from my Hayes AT Command
+// parser, so the variables are named differently.
 #define CR           13
 #define BEL          7
 #define BS           8
 #define CAN          24
 byte lineinput(char *cmdLine, byte len)
 {
-  char    ch;
+  int     ch;
   byte    cmdLen = 0;
   boolean done;
 
   done = false;
   while(!done)
   {
+    //ledBlink();
+
+    ch = -1; // -1 is no data available
+
     if (Serial.available()>0)
-    {  
+    {
       ch = Serial.read();
-      switch(ch)
+    }
+    else
+    {
+      continue; // No data. Go back to the while()...
+    }
+    switch(ch)
+    {
+    case -1: // No data available.
+      break;
+
+    case CR:
+      print();
+      cmdLine[cmdLen] = '\0';
+      done = true;
+      break;
+
+      /*case CAN:
+       print(F("[CAN]"));
+       cmdLen = 0;
+       break;*/
+
+    case BS:
+      if (cmdLen>0)
       {
-      case CR:
-        print();
-        cmdLine[cmdLen] = '\0';
-        done = true;
-        break;
+        printCharSemi(BS);
+        printSemi(F(" "));
+        printCharSemi(BS);
+        cmdLen--;
+      }
+      break;
 
-      case CAN:
-        print(F("[CAN]"));
-        cmdLen = 0;
-        break;
-
-      case BS:
-        if (cmdLen>0)
+    default:
+      // If there is room, store any printable characters in the cmdline.
+      if (cmdLen<len)
+      {
+        if ((ch>31) && (ch<127)) // isprint(ch) does not work.
         {
-          Serial.write(BS);
-          Serial.print(F(" "));
-          Serial.write(BS);
-          cmdLen--;
+          printCharSemi(ch);
+          cmdLine[cmdLen] = ch; //toupper(ch);
+          cmdLen++;
         }
-        break;
-
-      default:
-        // If there is room, store any printable characters in the cmdline.
-        if (cmdLen<CMDLINE_SIZE)
-        {
-          if ((ch>31) && (ch<127)) // isprint(ch) does not work.
-          {
-            Serial.print(ch);
-            cmdLine[cmdLen] = ch; //toupper(ch);
-            cmdLen++;
-          }
-        }
-        else
-        {
-          Serial.write(BEL); // Overflow. Ring 'dat bell.
-        }
-        break;
-      } // end of switch(ch)           
-    } // end of if (Serial.available()>0)
+      }
+      else
+      {
+        printCharSemi(BEL); // Overflow. Ring 'dat bell.
+      }
+      break;
+    } // end of switch(ch)
   } // end of while(!done)
 
   return cmdLen;
 }
+#endif
 
-// Scan local input (not remote/network).
+// INKEY$
+// Return character waiting (if any) from standard input (not ethernet).
 char inkey()
 {
   if (Serial.available()==0) return 0;
@@ -977,17 +1095,21 @@ char inkey()
 }
 
 /*---------------------------------------------------------------------------*/
+
 // File I/O
-//560 OPEN"I",#-1,"USERLOG":INPUT#-1,CL,NM:FORA=0TONM:INPUT#-1,NM$(A):NEXTA:CLOSE
+// Ideally, I would have created wrappers for the OPEN, READ, CLOSE commands,
+// but I was in a hurry, so...
+
+//SD Card routines
+#if defined(SD_PIN)
 #define TEMP_SIZE 4
 #define FNAME_MAX (8+1+3+1)
-
 boolean initSD()
 {
   static bool sdInit = false;
-  
+
   if (sdInit==true) return true;
-  
+
   printSemi(F("Initializing SD card..."));
   pinMode(SD_PIN, OUTPUT);
   if (!SD.begin(SD_PIN))
@@ -997,10 +1119,12 @@ boolean initSD()
   }
   print(F("initialization done."));
   sdInit = true;
-  
+
   return true;
 }
+#endif
 
+//560 OPEN"I",#-1,"USERLOG":INPUT#-1,CL,NM:FORA=0TONM:INPUT#-1,NM$(A):NEXTA:CLOSE
 void loadUserlog()
 {
 #if defined(SD_PIN)
@@ -1010,16 +1134,17 @@ void loadUserlog()
 
   if (!initSD()) return;
 
-  pstrncpy(filename, PSTR("USERLOG"), FNAME_MAX);
+  strncpy_P(filename, PSTR("USERLOG"), FNAME_MAX);
 
   myFile = SD.open(filename, FILE_READ);
-  
+
   if (myFile)
   {
-    print(F("File opened."));
+    printSemi(filename);
+    print(F(" opened."));
     fileReadln(myFile, tempStr, TEMP_SIZE);
     cl = atoi(tempStr);
-    Serial.print(F("cl ="));
+    Serial.print(F("cl = "));
     Serial.println(cl);
     fileReadln(myFile, tempStr, TEMP_SIZE);
     nm = atoi(tempStr);
@@ -1036,10 +1161,11 @@ void loadUserlog()
   }
   else
   {
-    print(F("Error opening file."));
+    printSemi(F("Error opening "));
+    print(filename);
   }
 #else  
-  print(F("load USERLOG"));
+  print(F("(USERLOG would be loaded from tape here.)"));
 #endif
 }
 
@@ -1053,12 +1179,13 @@ void loadMsgBase()
 
   if (!initSD()) return;
 
-  pstrncpy(filename, PSTR("MSGBASE"), FNAME_MAX);
+  strncpy_P(filename, PSTR("MSGBASE"), FNAME_MAX);
 
   myFile = SD.open(filename, FILE_READ);
   if (myFile)
   {
-    print(F("File opened."));
+    printSemi(filename);
+    print(F(" opened."));
     fileReadln(myFile, tempStr, TEMP_SIZE);
     ms = atoi(tempStr);
     Serial.print("ms = ");
@@ -1080,22 +1207,21 @@ void loadMsgBase()
   }
   else
   {
-    print(F("Error opening file."));
+    printSemi(F("Error opening "));
+    print(filename);
   }
 #else
-  print(F("load MSGBASE"));
+  print(F("(MSGBASE would be loaded from tape here.)"));
 #endif
 }
 
 #if defined(SD_PIN)
-#define LF '\r'
-byte fileReadln(File myFile, char *buffer, byte count)
+//byte fileReadln(File myFile, char *buffer, byte count)
 {
   char ch;
   int  pos;
-  
+
   pos = 0;
-  Serial.print(F("Read>"));
   while(myFile.available() && pos<count)
   {
     ch = myFile.read();
@@ -1106,19 +1232,18 @@ byte fileReadln(File myFile, char *buffer, byte count)
     }
     if (ch>=32)
     {
-      Serial.print(ch);
+      //Serial.print(ch);
       buffer[pos] = ch;
       pos++;
     }
   }
   if (pos>=count) buffer[pos] = '\0';
-  Serial.println();
+  //Serial.println();
   return pos;
 }
 #endif
 
 //610 OPEN"O",#-1,"USERLOG":PRINT#-1,CL,NM:FORA=0TONM:PRINT#-1,NM$(A):NEXTA:CLOSE
-
 void saveUserlog()
 {
 #if defined(SD_PIN)
@@ -1127,14 +1252,15 @@ void saveUserlog()
 
   if (!initSD()) return;
 
-  pstrncpy(filename, PSTR("USERLOG"), FNAME_MAX);
-  
+  strncpy_P(filename, PSTR("USERLOG"), FNAME_MAX);
+
   if (SD.exists(filename)==true) SD.remove(filename);
 
   myFile = SD.open(filename, FILE_WRITE);
   if (myFile)
   {
-    print(F("File created."));
+    printSemi(filename);
+    print(F(" created."));
     myFile.println(cl);
     Serial.print(F("cl = "));
     Serial.println(cl);
@@ -1168,14 +1294,15 @@ void saveMsgBase()
 
   if (!initSD()) return;
 
-  pstrncpy(filename, PSTR("MSGBASE"), FNAME_MAX);
-  
+  strncpy_P(filename, PSTR("MSGBASE"), FNAME_MAX);
+
   if (SD.exists(filename)==true) SD.remove(filename);
 
   myFile = SD.open(filename, FILE_WRITE);
   if (myFile)
   {
-    print(F("File created."));
+    printSemi(filename);
+    print(F(" created."));
     myFile.println(ms);
     for (a=0; a<=ms-1; a++)
     {
@@ -1203,74 +1330,129 @@ void saveMsgBase()
 
 /*---------------------------------------------------------------------------*/
 // Print (output) routines.
+
+// For TAB to work, we need to track where we think we are on the line.
 byte tabPos = 0;
 
-void printTab(byte tabToPos)
+// We want to simulate the following:
+// PRINT "HELLO"  -- string, with carraige return at end of line
+// PRINT A        -- number (space before and after), with carraige return
+// PRINT "HELLO"; -- no carraige return
+// PRINT TAB(5);  -- tab to position 5
+// PRINT "A","B"  -- tab to column 16 (on 32-column screen)
+
+// Due to various types of strings on Arduino (in memory or Flash), we will
+// have to duplicate some functions to have versions that take the other
+// types of strings.
+
+// printTypeSemi() routines will not put a carraige return at the end.
+
+// PRINT TAB(column);
+void printTab(byte column)
 {
-  while(tabPos<tabToPos)
+  while(tabPos<column)
   {
     printSemi(F(" ")); // Print, and increment tab position.
   }
 }
+
+// PRINT,
+// NOTE: DECB doesn't add a carraige return after a comma.
 void printComma()
 {
   printTab(tabPos + (16-(tabPos % 16)));
 }
 
-void print(void)
-{
-  Serial.println();
-}
+// PRINT "STRING";
+// For normal strings in RAM.
 void printSemi(const char *string)
 {
   tabPos = tabPos + Serial.print(string);
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(string);
+#endif
 }
+// For strings in Flash.
 void printSemi(const __FlashStringHelper *string)
 {
   tabPos = tabPos + Serial.print(string);
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(string);
+#endif
 }
+// For printing a byte as a number (0-255).
 void printSemi(byte num)
 {
   Serial.print(F(" "));
   tabPos = tabPos + Serial.print(num);
   Serial.print(F(" "));
   tabPos = tabPos + 2;
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(F(" "));
+  telnetClient.print(num);
+  telnetClient.print(F(" "));
+#endif
 }
+// For printing a single character.
 void printCharSemi(char ch)
 {
   tabPos = tabPos + Serial.print(ch);
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(ch);
+#endif
 }
+// For printing a byte as a number with no spaces.
 void printNumSemi(byte num)
 {
   tabPos = tabPos + Serial.print(num);
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(num);
+#endif
 }
 
+// PRINT
+void print(void)
+{
+  Serial.println();
+#if defined(ENET_PORT)
+  telnetClient.println();
+#endif
+}
+
+// PRINT "STRING"
 void print(const char *string)
 {
   Serial.println(string);
   tabPos = 0;
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.println(string);
+#endif
 }
 void print(const __FlashStringHelper *string)
 {
   Serial.println(string);
   tabPos = 0;
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.println(string);
+#endif
 }
+
+// PRINT I
 void print(int num)
 {
   Serial.print(F(" "));
   Serial.println(num);
   tabPos = 0;
-  //delay(1000);
+#if defined(ENET_PORT)
+  telnetClient.print(F(" "));
+  telnetClient.println(num);
+#endif
 }
 
-void printUsing(char *format, byte num)
+// PRINT USING(format, number);
+// NOTE: This only emulates printing positive integers, which is the
+// only way it is used by this program.
+void printUsingSemi(char *format, byte num)
 {
   byte i;
   byte fmtDigits;
@@ -1314,18 +1496,12 @@ void printUsing(char *format, byte num)
 }
 
 /*---------------------------------------------------------------------------*/
-// DEBUG functions.
-void debug(char *msg)
-{
-  delay(1000);
-  Serial.println(msg);
-  delay(1000);
-}
+// Show some stuff functions.
 
 // Emit some configuration information.
 void showConfig()
 {
-  print(brStr);
+  print((__FlashStringHelper*)brStr);
   print(F("*ALL RAM* Configuration:"));
   printSemi(F("Userlog size :"));
   print(MAX_USERS+1);
@@ -1339,13 +1515,54 @@ void showConfig()
   print(MAX_MSGS+1);
   printSemi(F("Message lines:"));
   print(MAX_LINE+1);
+#if defined(SD_PIN)
+  print(F("SD card      : Enabled"));
+#endif
+#if defined(ENET_PORT)
+  print(F("Ethernet     : Enabled"));
+#endif
   printSemi(F("ESTIMATED MEM:"));
   printSemi(ULOG_MEM + MBASE_MEM);
-  print(F(" bytes."));
+  print(F("bytes."));
   printSemi(F("Free RAM     :"));
   print(freeRam());
-  print(brStr);
+  print((__FlashStringHelper*)brStr);
 }
+
+void showLoginMessage()
+{
+  print(F("\nYou are connected to an Arduino UNO R3, a small computer thing you can buy\n"
+    "from Radio Shack for $29.99 (or around $22 online). It has 2K of RAM and\n"
+    "32K of Flash for program storage. It has a SainSmart Ethernet Shield ($17.99)\n"
+    "attached to it. The software running here is a line-by-line port of my\n"
+    "*ALL RAM* BBS program written in 1983. The original Extended Color BASIC\n"
+    "code was converted as literally as possible to Arduino C. It's a travesty.\n"
+    "\n"
+    "This BBS program was designed to run on a cassette based TRS-80 Color\n"
+    "Computer with 32K of RAM. All messages and users were stored in memory.\n"
+    "Obviously, with only 2K of RAM, this is not possible, so this version has\n"
+    "been configured to allow only a few users and a teensy tiny message base\n"
+    "(smaller than Twitter posts!). Enjoy the experiment!\n"
+    "\n"
+    "(If userlog is full, use the Sysop password 'TEST'.)"));
+}
+
+void showCoCoHeader()
+{
+  cls();
+  print(F("EXTENDED COLOR BASIC 1.1\n"
+    "COPYRIGHT (C) 1982 BY TANDY\n"
+    "UNDER LICENSE FROM MICROSOFT\n"
+    "\n"
+    "OK\n"
+    "CLOAD\"ALLRAM\"\n"
+    "RUN"));
+}
+
+/*---------------------------------------------------------------------------*/
+
+// Debug and utility functions.
+//
 
 unsigned int freeRam() {
   extern int __heap_start, *__brkval; 
@@ -1355,9 +1572,11 @@ unsigned int freeRam() {
 
 void showFreeRam()
 {
-  printSemi(F("Free RAM: "));
+  printSemi(F("Free RAM:"));
   print(freeRam());
 }
+
+/*---------------------------------------------------------------------------*/
 
 void showUserlog()
 {
@@ -1374,7 +1593,7 @@ void showUserlog()
 void showMessageBase()
 {
   int i,j;
-  
+
   for (int i=0; i<ms; i++)
   {
     for (int j=0; j<=MAX_LINE; j++)
@@ -1389,36 +1608,6 @@ void showMessageBase()
   }
 }
 
-/*---------------------------------------------------------------------------*/
-// Flash memory handling functions.
-void pstrncpy(char *buffer, PGM_P s, byte count)
-{
-  byte pos;
-  byte ch;
-  
-  pos = 0;
-  while(pos<count)
-  {
-    ch = pgm_read_byte(s++);
-    buffer[pos] = ch;
-    if (ch==0) break;
-    pos++;
-  }
-}
-void pstrcat(char *buffer, PGM_P s)
-{
-  byte pos;
-  byte ch;
-  
-  pos = strlen(buffer);
-  while(pos<INPUT_SIZE)
-  {
-    ch = pgm_read_byte(s++);
-    buffer[pos] = ch;
-    if (ch==0) break;
-    pos++;
-  }
-}
 
 /*---------------------------------------------------------------------------*/
 
@@ -1500,4 +1689,6 @@ void pstrcat(char *buffer, PGM_P s)
 //430 PRINT:LINEINPUT"DELETE THIS?";A$:IFLEFT$(A$,1)<>"Y"THEN410
 //435 IFA=MS THENMS=MS-1:GOTO410
 //440 FORB=A-1 TOMS-2:FORC=0TO10:MS$(B,C)=MS$(B+1,C):NEXTC:NEXTB:MS=MS-1:GOTO410
+
+// End of file.
 
