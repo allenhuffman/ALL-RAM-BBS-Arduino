@@ -191,7 +191,7 @@ const char DONTstr[] FLASHMEM = "DONT";
 const char IACstr[]  FLASHMEM = "IAC";
 
 // Create an array of pointers to Flash strings, in Flash.
-const char *telnetCmd[] FLASHMEM = // 240-255
+const char * const telnetCmd[] FLASHMEM = // 240-255
 {
   SEstr, NOPstr, DMstr, BRKstr, IPstr, AOstr, AYTstr, ECstr,
   ELstr, GAstr, SBstr, WILLstr, WONTstr, DOstr, DONTstr, IACstr
@@ -266,7 +266,7 @@ typedef struct
 } 
 TelnetOptStruct;
 
-TelnetOptStruct telnetOpt[] FLASHMEM =
+const TelnetOptStruct telnetOpt[] FLASHMEM =
 {
   { 
     OPT_TRANSBIN,   opt_transbin       }

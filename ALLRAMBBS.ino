@@ -1,9 +1,7 @@
 // BOF preprocessor bug prevent - insert me on top of your arduino-code
-/*
 #if 1
 __asm volatile ("nop");
 #endif
-*/
 /*-----------------------------------------------------------------------------
  
  *ALL RAM* BBS for Arduino
@@ -44,16 +42,17 @@ __asm volatile ("nop");
  2013-04-06 1.3 allenh - Cleanup for posting to www.appleause.com
  2013-04-09 1.4 allenh - Fixed a bug with INPUT_SIZE and input.
  2013-04-12 1.5 allenh - Integration with new Telnet server code, misc fixes.
+ 2015-02-14 1.6 allenh - Adding some "const" to make it build with 1.6.0.
  -----------------------------------------------------------------------------*/
 #include <avr/pgmspace.h>
 
-#define VERSION "1.5"
+#define VERSION "1.6"
 
 // To enable SD card support, define the PIN used by SD.begin(x)
 //#define SD_PIN        4
 
 // To enable Ethernet support, defined the PORT used by EthernetServer(PORT)
-#define ENET_PORT     23
+//#define ENET_PORT     23
 
 // NOTE: On smaller Arduinos (UNO), there is not enough Flash or RAM to have
 // both SD and Ethernet support at the same time.
@@ -179,8 +178,8 @@ char pwStr[PSWD_SIZE];                            // PW$ - Pswd
 
 // To save RAM, these two strings will exist in Flash memory. It will
 // require a bit of work later to use them (__FlashStringHelper*).
-prog_char brStr[] PROGMEM = "*==============*==============*"; // BR$ - border
-prog_char clStr[] PROGMEM = "\x0c\x0e";                        // CL$ - clear
+const char PROGMEM brStr[] PROGMEM = "*==============*==============*"; // BR$ - border
+const char PROGMEM clStr[] PROGMEM = "\x0c\x0e";                        // CL$ - clear
 
 int a, b, c, cl, ln, lv, ms, nm, ky, uc;
 // A, B, C - misc.
