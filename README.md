@@ -1,4 +1,4 @@
-ALLRAMBBS
+ALLRAMBBS (Arduino)
 =========
 
 1983 cassette BBS ported from BASIC ;-)
