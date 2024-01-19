@@ -1,5 +1,5 @@
-ALLRAMBBS (Arduino)
-=========
+*ALL RAM* BBS (Arduino)
+=============
 
 1983 cassette BBS ported from BASIC ;-)
 
